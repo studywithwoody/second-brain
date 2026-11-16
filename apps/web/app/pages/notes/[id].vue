@@ -11,6 +11,11 @@ const historyContent = ref('')
 const reviewNote = ref('')
 
 const api = useRequestFetch()
+const savedSnapshot = ref('')
+function snapshotOf(note: any) {
+  return note ? JSON.stringify([note.title, note.path, note.content]) : ''
+}
+const dirty = computed(() => Boolean(detail.value) && snapshotOf(detail.value.note) !== savedSnapshot.value)
 const jobState = ref<any>(null)
 const waitingForGraph = ref(false)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
@@ -76,6 +81,7 @@ async function load() {
   error.value = ''
   try {
     detail.value = await api(`/api/notes/${id.value}`)
+    savedSnapshot.value = snapshotOf(detail.value?.note)
   } catch (err: any) {
     error.value = err?.data?.message || '找不到這篇筆記'
   }
@@ -105,7 +111,6 @@ async function save() {
       }
     })
     await load()
-    startPolling()
   } catch (err: any) {
     error.value = err?.data?.message || '儲存失敗'
   } finally {
@@ -113,20 +118,51 @@ async function save() {
   }
 }
 
+const checking = ref(false)
 async function factcheck() {
-  saving.value = true
+  // Check what the user sees: save pending edits first.
+  if (dirty.value) {
+    await save()
+    if (error.value) return
+  }
+  checking.value = true
+  error.value = ''
   try {
-    await $fetch(`/api/notes/${id.value}/factcheck`, { method: 'POST' })
+    const queued = await $fetch<{ blocked?: boolean, estimate?: number }>(`/api/notes/${id.value}/factcheck`, { method: 'POST' })
+    if (queued?.blocked) error.value = `本月 AI 預算不足（預估 $${Number(queued.estimate || 0).toFixed(4)}），查核已排隊暫停，調高上限或下個月會自動繼續。`
     await load()
     startPolling()
   } catch (err: any) {
     error.value = err?.data?.message || '查核失敗'
   } finally {
-    saving.value = false
+    checking.value = false
   }
 }
 
+const factcheckStatus = computed(() => {
+  const active = (jobState.value?.active || []).find((job: any) => job.kind === 'factcheck')
+  if (active) return active.status === 'running' ? 'running' : 'queued'
+  if (dirty.value && detail.value?.factcheck?.status === 'done') return 'outdated'
+  return jobState.value?.factcheck?.status || detail.value?.factcheck?.status || 'never'
+})
+const factcheckInfo: Record<string, { label: string, color: 'neutral' | 'warning' | 'info' | 'success' | 'error', hint: string }> = {
+  never: { label: '尚未查核', color: 'neutral', hint: '儲存不會自動查核。需要時按「事實查核」。' },
+  outdated: { label: '內容已變更', color: 'warning', hint: '上次查核之後改過內容，下面是舊版本的結果。' },
+  queued: { label: '排隊中', color: 'info', hint: 'AI 查核已排隊，通常一分鐘內完成。' },
+  running: { label: '查核中', color: 'info', hint: 'AI 正在查核，完成後會自動更新。' },
+  paused_budget: { label: '預算暫停', color: 'error', hint: '本月 AI 預算已用完，調高上限或下個月會自動繼續。' },
+  failed: { label: '查核失敗', color: 'error', hint: '可以再按一次「事實查核」重試。' },
+  done: { label: '已查核', color: 'success', hint: '' }
+}
+
 async function buildGraph() {
+  // A fact-check is optional: warn, but let the user build the graph anyway.
+  if (dirty.value) {
+    await save()
+    if (error.value) return
+  }
+  const status = factcheckStatus.value
+  if ((status === 'never' || status === 'outdated' || status === 'failed') && !confirm(status === 'never' ? '這篇還沒做事實查核。仍要產生圖譜變更集嗎？' : '目前內容還沒有查核過。仍要產生圖譜變更集嗎？')) return
   const flagged = (detail.value?.claims || []).filter((claim: any) => !claim.review && (claim.verdict === 'contradicted' || claim.verdict === 'uncertain'))
   if (flagged.length && !confirm(`還有 ${flagged.length} 條主張沒覆核。仍要產生圖譜變更集嗎？`)) return
   saving.value = true
@@ -151,7 +187,7 @@ async function review(claimId: string, decision: string) {
     const result = await $fetch<{ versionId?: string | null }>(`/api/claims/${claimId}/review`, { method: 'POST', body: { decision, note: reviewNote.value } })
     reviewNote.value = ''
     await load()
-    if (result?.versionId) startPolling()
+    if (result?.versionId) jobState.value = await $fetch(`/api/jobs`, { query: { documentId: id.value } }).catch(() => jobState.value)
   } catch (err: any) {
     error.value = err?.data?.message || '覆核失敗'
   }
@@ -194,6 +230,11 @@ function onKey(event: KeyboardEvent) {
   }
 }
 
+const reviewLabel: Record<string, string> = {
+  accept_fix: '✓ 已接受修正，這條已解決',
+  keep_noted: '已保留並註記',
+  mark_false_positive: '已標為誤判'
+}
 const verdictLabel: Record<string, string> = {
   supported: '支持',
   contradicted: '矛盾',
@@ -211,7 +252,7 @@ const verdictLabel: Record<string, string> = {
       </div>
       <div class="flex flex-wrap gap-2">
         <UButton color="neutral" variant="soft" @click="showHistory = !showHistory">版本</UButton>
-        <UButton color="neutral" variant="outline" :loading="saving" @click="factcheck">重新查核</UButton>
+        <UButton color="neutral" variant="outline" icon="i-lucide-search-check" :loading="checking || factcheckStatus === 'running' || factcheckStatus === 'queued'" @click="factcheck">事實查核</UButton>
         <UButton :loading="saving" @click="save">儲存</UButton>
       </div>
     </div>
@@ -253,9 +294,23 @@ const verdictLabel: Record<string, string> = {
         <section class="rounded-2xl border border-stone-300 bg-white p-4">
           <div class="flex items-center justify-between">
             <h2 class="serif text-xl">查核</h2>
-            <span class="text-xs text-stone-500">預估 ${{ detail.estimates.factcheckUsd.toFixed(4) }}</span>
+            <UBadge :color="factcheckInfo[factcheckStatus]?.color || 'neutral'" variant="subtle">{{ factcheckInfo[factcheckStatus]?.label || factcheckStatus }}</UBadge>
           </div>
-          <p v-if="!detail.claims.length" class="mt-3 text-sm text-stone-500">{{ jobState?.active?.some((job: any) => job.kind === 'factcheck') ? 'AI 正在查核，通常一分鐘內完成。' : '這篇還沒有查核結果。儲存後會自動跑一次。' }}</p>
+          <p class="mt-1 text-xs text-stone-500">
+            <span v-if="detail.factcheck?.checkedAt">上次查核 {{ new Date(detail.factcheck.checkedAt).toLocaleString() }}。</span>
+            {{ factcheckInfo[factcheckStatus]?.hint }}
+          </p>
+          <UButton
+            class="mt-3"
+            block
+            icon="i-lucide-search-check"
+            :loading="checking || factcheckStatus === 'running' || factcheckStatus === 'queued'"
+            @click="factcheck"
+          >
+            事實查核（預估 ${{ detail.estimates.factcheckUsd.toFixed(4) }}）
+          </UButton>
+          <p v-if="detail.factcheck?.lastError && factcheckStatus === 'failed'" class="mt-2 text-xs text-red-700">{{ detail.factcheck.lastError }}</p>
+          <p v-if="!detail.claims.length && factcheckStatus === 'never'" class="mt-3 text-sm text-stone-500">這篇還沒有查核結果。</p>
           <article v-for="claim in detail.claims" :key="claim.id" class="mt-3 border-t border-stone-100 pt-3">
             <div class="flex items-center justify-between gap-2">
               <UBadge :color="claim.verdict === 'contradicted' ? 'error' : claim.verdict === 'supported' ? 'success' : 'warning'" variant="subtle">
@@ -271,7 +326,7 @@ const verdictLabel: Record<string, string> = {
                 {{ cite.title }}<span v-if="cite.provider === 'mock'">（示範來源）</span>：{{ cite.quote }}
               </li>
             </ul>
-            <p v-if="claim.review" class="mt-2 text-xs text-stone-500">已覆核：{{ claim.review.decision }}</p>
+            <p v-if="claim.review" class="mt-2 text-xs text-stone-500">{{ reviewLabel[claim.review.decision] || `已覆核：${claim.review.decision}` }}</p>
             <div v-else-if="claim.verdict === 'contradicted' || claim.verdict === 'uncertain'" class="mt-2 flex flex-wrap gap-1">
               <UButton size="xs" @click="review(claim.id, 'accept_fix')">接受修正</UButton>
               <UButton size="xs" color="neutral" variant="soft" @click="review(claim.id, 'keep_noted')">保留並註記</UButton>

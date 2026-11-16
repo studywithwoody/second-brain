@@ -1,5 +1,5 @@
-import { enqueueFactcheck, inlineJobsEnabled, processPending, saveNote } from '@kb/pipeline'
-import { JOB_BUDGET_MS, requireOwner, runQueuedJobs, useDb, withApi } from '../../utils/context'
+import { saveNote } from '@kb/pipeline'
+import { requireOwner, useDb, withApi } from '../../utils/context'
 
 export default defineEventHandler((event) => withApi(async () => {
   const user = await requireOwner(event)
@@ -15,12 +15,6 @@ export default defineEventHandler((event) => withApi(async () => {
     tags: body.tags,
     webSearchOverride: body.webSearchOverride
   })
-  let factcheck = null
-  if (saved.changed) {
-    factcheck = await enqueueFactcheck(db, user.workspaceId, saved.documentId)
-    if (inlineJobsEnabled() && !factcheck.blocked) {
-      await runQueuedJobs(event, () => processPending(db, user.workspaceId, 3, { budgetMs: JOB_BUDGET_MS }))
-    }
-  }
-  return { ...saved, factcheck }
+  // Saving never starts a fact-check; the user runs it from the note page (「事實查核」).
+  return saved
 }))

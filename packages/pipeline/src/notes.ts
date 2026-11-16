@@ -12,6 +12,7 @@ import { embedTexts, estimateFactcheckCost, estimateGraphCost } from '@kb/ai'
 import { chunksOf, noteSearchText, parseNote, wikilinks } from './markdown'
 import { id, sha256 } from './util'
 import { addSpend } from './budget'
+import { getFactcheckState } from './factcheck-state'
 
 export interface SaveNoteInput {
   workspaceId: string
@@ -109,7 +110,10 @@ export async function getNote(db: AppDb, workspaceId: string, documentId: string
     eq(docLinks.toDocumentId, note.id),
     isNull(documents.deletedAt)
   ))
-  const claimRows = await db.select().from(claims).where(eq(claims.documentVersionId, note.currentVersionId)).orderBy(claims.spanStart)
+  // Fact-checks are manual, so show the claims from the last completed check even if the note changed since.
+  const factcheck = await getFactcheckState(db, workspaceId, note.id)
+  const claimsVersionId = factcheck.checkedVersionId || note.currentVersionId
+  const claimRows = await db.select().from(claims).where(eq(claims.documentVersionId, claimsVersionId)).orderBy(claims.spanStart)
   const reviews = claimRows.length
     ? await db.select().from(claimReviews).where(inArray(claimReviews.claimId, claimRows.map(row => row.id)))
     : []
@@ -136,6 +140,7 @@ export async function getNote(db: AppDb, workspaceId: string, documentId: string
       ...claim,
       review: reviews.find(review => review.claimId === claim.id) || null
     })),
+    factcheck,
     estimates: {
       factcheckUsd: estimateFactcheckCost(content.length),
       graphUsd: estimateGraphCost(content.length)

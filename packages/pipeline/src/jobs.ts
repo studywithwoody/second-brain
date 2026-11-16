@@ -29,6 +29,7 @@ import { gateBudget, addSpend, getWorkspace } from './budget'
 import { notifyUser } from './notify'
 import { createChangeset, latestVersion, loadState, snapshotCurrent } from './graph-repo'
 import { graphChangesets } from '@kb/db'
+import { getFactcheckState } from './factcheck-state'
 import { asRows, currentMonth, id } from './util'
 
 type OpDraft = GraphOp & { evidence?: Array<{ documentVersionId?: string, quote: string, spanStart?: number, spanEnd?: number }> }
@@ -823,6 +824,7 @@ export async function documentJobStatus(db: AppDb, workspaceId: string, document
     .limit(1)
   return {
     active,
+    factcheck: await getFactcheckState(db, workspaceId, documentId),
     latest: {
       factcheck: list.find(job => job.kind === 'factcheck') || null,
       graph: list.find(job => job.kind === 'graph_incremental') || null
