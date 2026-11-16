@@ -3,8 +3,9 @@ definePageMeta({ layout: 'blank' })
 const route = useRoute()
 const config = await $fetch<{ devBypass: boolean, google: boolean }>('/api/auth/config')
 const error = computed(() => {
-  if (route.query.error === 'owner') return '這個 Google 帳號不是擁有者。只有 OWNER_EMAIL 能登入。'
-  if (route.query.error === 'oauth') return 'Google 登入沒有完成。'
+  if (route.query.error === 'owner') return '這個 Google 帳號不是擁有者。請改用擁有者的 Google 帳號（OWNER_EMAIL）登入。'
+  if (route.query.error === 'denied') return 'Google 拒絕了這個應用的存取。若 OAuth 同意畫面仍是 Testing，請把擁有者的 Gmail 加為測試使用者，或把應用發布為正式版。'
+  if (route.query.error === 'oauth') return 'Google 登入沒有完成。請再試一次。'
   return ''
 })
 const pending = ref(false)
