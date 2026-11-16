@@ -1,0 +1,30 @@
+{
+  "name": "second-brain-kb",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.4",
+  "scripts": {
+    "dev": "tsx scripts/dev.ts",
+    "dev:web": "pnpm --filter @kb/web dev",
+    "worker": "tsx apps/worker/src/index.ts",
+    "test": "vitest run",
+    "db:generate": "pnpm --filter @kb/db generate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed": "tsx scripts/seed.ts",
+    "typecheck": "pnpm --filter @kb/web typecheck"
+  },
+  "dependencies": {
+    "@kb/db": "workspace:*",
+    "@electric-sql/pglite": "^0.5.16",
+    "@electric-sql/pglite-socket": "^0.2.19",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.45.4",
+    "postgres": "^3.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  }
+}

@@ -1,0 +1,40 @@
+# Render Background Worker：執行查核與圖譜建構。
+# 資料庫用既有的 Neon，不在 Render 另開 Postgres。
+# 請在 Dashboard 填入 sync: false 的密鑰；不要把金鑰寫進這個檔案。
+services:
+  - type: worker
+    name: second-brain-ai-worker
+    runtime: node
+    region: singapore
+    plan: starter
+    buildCommand: corepack enable && corepack prepare pnpm@10.33.4 --activate && pnpm install --frozen-lockfile
+    startCommand: pnpm --filter @kb/worker start
+    envVars:
+      - key: DATABASE_URL_UNPOOLED
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: EXA_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: OWNER_EMAIL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: NOTIFY_EMAIL_FROM
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: EXTRACTION_MODEL
+        value: gemini-3.5-flash-lite
+      - key: VERDICT_MODEL
+        value: gemini-3.8-flash
+      - key: EMBEDDING_MODEL
+        value: gemini-embedding-001
+      - key: MONTHLY_BUDGET_USD
+        value: "10"
+      - key: PROCESS_JOBS_INLINE
+        value: "false"
+      - key: NODE_ENV
+        value: production
