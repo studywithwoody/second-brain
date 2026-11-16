@@ -21,7 +21,7 @@ export async function upsertOwner(db: AppDb, email: string, name: string) {
     ownerId: user.id,
     name: '我的知識庫',
     graphDisplayLang: 'zh-TW',
-    webSearchEnabled: false,
+    webSearchEnabled: Boolean(process.env.EXA_API_KEY || process.env.TAVILY_API_KEY),
     monthlyBudgetUsd: Number.isFinite(cap) && cap > 0 ? cap : 10
   }).returning()
   await db.insert(workspaceMembers).values({

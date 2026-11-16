@@ -53,7 +53,11 @@ async function mountGraph() {
     const height = Math.max(host.value.clientHeight, 520)
     const element = host.value
     if (props.mode === '3d') {
-      const Factory = factoryOf(await import('3d-force-graph'))
+      const [mod, spriteMod] = await Promise.all([import('3d-force-graph'), import('three-spritetext')])
+      const SpriteText = ((spriteMod as { default?: unknown }).default ?? spriteMod) as new (text?: string, height?: number, color?: string) => {
+        color: string, backgroundColor: string | false, padding: number, borderRadius: number, fontFace: string, fontWeight: string, position: { y: number }
+      }
+      const Factory = factoryOf(mod)
       graph = Factory()(element)
         .width(width)
         .height(height)
@@ -62,7 +66,23 @@ async function mountGraph() {
         .nodeLabel((node: { label?: string, locked?: boolean }) => `${node.label || ''}${node.locked ? ' 🔒' : ''}`)
         .nodeColor((node: { type?: string, highlight?: string }) => color(node))
         .nodeVal((node: { highlight?: string }) => node.highlight && node.highlight !== 'idle' ? 8 : 4)
+        .nodeOpacity(0.92)
+        // Always-visible text labels so the 3D view is readable without hovering.
+        .nodeThreeObjectExtend(true)
+        .nodeThreeObject((node: { label?: string, locked?: boolean, highlight?: string }) => {
+          const sprite = new SpriteText(`${node.label || ''}${node.locked ? ' 🔒' : ''}`, 6, node.highlight === 'remove' ? '#fecaca' : '#f5f5f4')
+          sprite.fontFace = '"Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif'
+          sprite.backgroundColor = 'rgba(20,24,31,0.55)'
+          sprite.padding = 1.2
+          sprite.borderRadius = 2
+          sprite.position.y = 9
+          return sprite
+        })
         .linkColor((link: { highlight?: string }) => link.highlight === 'remove' ? '#fca5a5' : link.highlight === 'add' ? '#86efac' : '#94a3b8')
+        .linkOpacity(0.55)
+        .linkWidth((link: { highlight?: string }) => link.highlight === 'add' || link.highlight === 'remove' ? 1.2 : 0.4)
+        .linkDirectionalArrowLength(3)
+        .linkDirectionalArrowRelPos(1)
         .linkLabel((link: { label?: string }) => link.label || '')
         .onNodeClick((node: { id?: string }) => node.id && emit('select', node.id))
     } else {
@@ -97,12 +117,27 @@ async function mountGraph() {
 }
 
 watch(() => [props.mode, props.nodes, props.links], () => { if (host.value) mountGraph() }, { deep: true })
-onBeforeUnmount(() => { graph?._destructor?.() })
+
+let resizeObserver: ResizeObserver | null = null
+onMounted(() => {
+  if (typeof ResizeObserver === 'undefined' || !host.value) return
+  resizeObserver = new ResizeObserver(() => {
+    if (!graph || !host.value) return
+    graph.width(host.value.clientWidth || 640)
+    graph.height(Math.max(host.value.clientHeight, 520))
+  })
+  resizeObserver.observe(host.value)
+})
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  graph?._destructor?.()
+})
 </script>
 
 <template>
-  <div class="sticky top-4 h-[640px] w-full overflow-hidden rounded-2xl bg-[#171b22]">
+  <div class="relative sticky top-4 h-[640px] w-full overflow-hidden rounded-2xl bg-[#171b22]">
     <div :ref="setHost" class="h-full w-full" />
     <p v-if="status" class="absolute inset-0 grid place-items-center px-6 text-center text-sm text-stone-300">{{ status }}</p>
+    <p v-else-if="!nodes.length" class="pointer-events-none absolute inset-0 grid place-items-center px-6 text-center text-sm text-stone-400">圖譜還是空的</p>
   </div>
 </template>

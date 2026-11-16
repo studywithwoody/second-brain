@@ -1,9 +1,12 @@
 <script setup lang="ts">
 const open = ref(false)
 const route = useRoute()
-watch(() => route.path, () => { open.value = false })
-
-const { data } = await useFetch('/api/settings', { server: false })
+const { data, refresh } = await useFetch('/api/settings', { server: false })
+watch(() => route.path, () => {
+  open.value = false
+  refresh()
+})
+const unread = computed(() => (data.value?.notifications || []).filter((item: any) => !item.readAt))
 async function logout() {
   await useUserSession().clear()
   await navigateTo('/login')
@@ -36,6 +39,7 @@ const links = [
       <nav class="grid gap-1">
         <NuxtLink v-for="link in links" :key="link.to" :to="link.to" class="nav-link">
           {{ link.label }}
+          <UBadge v-if="link.to === '/settings' && unread.length" size="sm" color="error" variant="solid" class="ml-1">{{ unread.length }}</UBadge>
         </NuxtLink>
       </nav>
       <div v-if="data?.budget" class="mt-6 rounded-xl bg-white/70 p-3 text-sm">
@@ -56,7 +60,7 @@ const links = [
         <UButton class="menu-btn" color="neutral" variant="soft" @click="open = !open">選單</UButton>
       </div>
       <UAlert v-if="mock" class="mb-3" color="neutral" variant="subtle" title="目前使用示範模型" description="沒有 GEMINI_API_KEY，查核與圖譜抽取走固定規則，方便在本機把流程走完。設定金鑰後會改呼叫 Gemini。" />
-      <UAlert v-if="paused" class="mb-3" color="error" variant="subtle" title="AI 任務已暫停" description="本月預算已用完。排隊中的任務會在下個月或你調高上限後繼續。" />
+      <UAlert v-if="paused" class="mb-3" color="error" variant="subtle" title="AI 任務已暫停" :description="`本月預算 $${Number(data?.budget?.capUsd || 0).toFixed(0)} 已用完。排隊中的任務會在下個月或你到「設定」調高上限後自動繼續。`" />
       <UAlert v-else-if="warn" class="mb-3" color="warning" variant="subtle" title="本月 AI 預算已超過 80%" description="還可以繼續，但送出全量重建前會先看預估費用。" />
       <slot />
     </div>

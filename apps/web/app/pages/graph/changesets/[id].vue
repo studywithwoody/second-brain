@@ -19,6 +19,10 @@ async function load() {
   detail.value = await api(`/api/graph/changesets/${id.value}`)
 }
 await load()
+onMounted(async () => {
+  const settings = await $fetch<any>('/api/settings').catch(() => null)
+  if (settings?.workspace?.graphDisplayLang === 'en') lang.value = 'en'
+})
 useSeoMeta({ title: '圖譜差異' })
 
 const preview = computed(() => {
@@ -83,6 +87,7 @@ async function reject() {
 function opTitle(op: any) {
   const after = op.after || {}
   const before = op.before || {}
+  if (lang.value === 'en') return after.labelEn || before.labelEn || after.relationEn || before.relationEn || after.labelZh || before.labelZh || ''
   return after.labelZh || before.labelZh || after.relationZh || before.relationZh || ''
 }
 
@@ -109,7 +114,7 @@ const opLabel: Record<string, string> = {
       <div class="flex gap-2">
         <UButton size="sm" :variant="mode === '2d' ? 'solid' : 'outline'" @click="mode = '2d'">2D</UButton>
         <UButton size="sm" color="neutral" :variant="mode === '3d' ? 'solid' : 'outline'" @click="mode = '3d'">3D</UButton>
-        <UButton size="sm" color="neutral" variant="soft" @click="lang = lang === 'en' ? 'zh-TW' : 'en'">{{ lang === 'en' ? 'English' : '中文' }}</UButton>
+        <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-languages" @click="lang = lang === 'en' ? 'zh-TW' : 'en'">{{ lang === 'en' ? '切換成中文' : 'Switch to English' }}</UButton>
       </div>
     </div>
     <p v-if="error" class="mb-2 text-sm text-red-700">{{ error }}</p>

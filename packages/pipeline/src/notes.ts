@@ -11,6 +11,7 @@ import {
 import { embedTexts, estimateFactcheckCost, estimateGraphCost } from '@kb/ai'
 import { chunksOf, noteSearchText, parseNote, wikilinks } from './markdown'
 import { id, sha256 } from './util'
+import { addSpend } from './budget'
 
 export interface SaveNoteInput {
   workspaceId: string
@@ -222,6 +223,8 @@ export async function saveNote(db: AppDb, input: SaveNoteInput) {
     const pieces = chunksOf(input.content)
     if (pieces.length) {
       const embedded = await embedTexts(pieces.map(piece => piece.text))
+      // Embeddings are cheap but still count toward the monthly AI budget.
+      await addSpend(db, input.workspaceId, embedded.usage.costUsd)
       await db.insert(docChunks).values(pieces.map(piece => ({
         id: id(),
         workspaceId: input.workspaceId,

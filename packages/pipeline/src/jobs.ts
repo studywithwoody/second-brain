@@ -28,11 +28,32 @@ import { applyOps, type GraphOp, type GraphState } from '@kb/graph'
 import { gateBudget, addSpend, getWorkspace } from './budget'
 import { notifyUser } from './notify'
 import { createChangeset, latestVersion, loadState, snapshotCurrent } from './graph-repo'
+import { graphChangesets } from '@kb/db'
 import { asRows, currentMonth, id } from './util'
 
 type OpDraft = GraphOp & { evidence?: Array<{ documentVersionId?: string, quote: string, spanStart?: number, spanEnd?: number }> }
 
 const ACCEPT_AT = 0.75
+
+/** LLM span offsets are unreliable; re-anchor each claim on the exact text in the note. */
+export function alignClaimSpans<T extends { text: string, spanStart: number, spanEnd: number }>(markdown: string, claims: T[]): T[] {
+  let cursor = 0
+  return claims.map((claim) => {
+    const text = claim.text.trim()
+    if (!text) return claim
+    if (markdown.slice(claim.spanStart, claim.spanEnd) === text) {
+      cursor = claim.spanEnd
+      return { ...claim, text }
+    }
+    let start = markdown.indexOf(text, cursor)
+    if (start < 0) start = markdown.indexOf(text)
+    if (start >= 0) {
+      cursor = start + text.length
+      return { ...claim, text, spanStart: start, spanEnd: start + text.length }
+    }
+    return { ...claim, text, spanStart: 0, spanEnd: 0 }
+  })
+}
 
 export function inlineJobsEnabled() {
   if (process.env.PROCESS_JOBS_INLINE === 'false') return false
@@ -66,7 +87,7 @@ export async function recoverStaleJobs(db: AppDb) {
   await db.execute(sql`
     UPDATE jobs
     SET status = 'queued', locked_at = NULL, updated_at = now()
-    WHERE status = 'running' AND locked_at < now() - interval '15 minutes'
+    WHERE status = 'running' AND locked_at < now() - interval '6 minutes'
   `)
 }
 
@@ -148,13 +169,15 @@ async function bumpSearch(db: AppDb, workspaceId: string, provider: string) {
   })
 }
 
-async function kbHits(db: AppDb, workspaceId: string, text: string) {
+async function kbHits(db: AppDb, workspaceId: string, text: string, excludeDocumentId?: string, usages?: Usage[]) {
   const embedded = await embedTexts([text])
+  usages?.push(embedded.usage)
   const vector = JSON.stringify(embedded.vectors[0] || [])
   const result = await db.execute(sql`
     SELECT text, 1 - (embedding <=> ${vector}::vector) AS score
     FROM doc_chunks
     WHERE workspace_id = ${workspaceId} AND embedding IS NOT NULL
+      ${excludeDocumentId ? sql`AND document_id <> ${excludeDocumentId}` : sql``}
     ORDER BY embedding <=> ${vector}::vector
     LIMIT 3
   `)
@@ -185,16 +208,23 @@ export async function proposeOps(input: {
   }
   for (const node of nodes) remember([node.labelZh, node.labelEn, ...node.aliases], node.id)
 
+  // Same name but a different kind of thing (e.g. the unit 牛頓 vs the person 牛頓) is not a match.
+  const compatible = (node: GraphState['nodes'][number], type: string) =>
+    node.type === type || node.type === 'other' || type === 'other'
+  // Primary names (labelZh / labelEn) of this extraction win over aliases when resolving relation endpoints.
+  const primaryByName = new Map<string, string>()
   for (const entity of input.extraction.entities) {
     const names = [entity.labelZh, entity.labelEn, ...entity.aliases]
-    let matched = nodes.find(node => names.some(name => idByName.get(normalizeName(name)) === node.id && names.some(item => normalizeName(item) === normalizeName(node.labelZh) || node.aliases.some(alias => normalizeName(alias) === normalizeName(item)) || normalizeName(node.labelEn) === normalizeName(item))))
+    const primary = [entity.labelZh, entity.labelEn].map(normalizeName).filter(Boolean)
+    let matched = nodes.find(node => compatible(node, entity.type) && primary.some(name => name === normalizeName(node.labelZh) || name === normalizeName(node.labelEn)))
     if (!matched) {
-      const direct = names.map(name => idByName.get(normalizeName(name))).find(Boolean)
-      matched = nodes.find(node => node.id === direct)
+      const direct = names.map(name => idByName.get(normalizeName(name))).filter(Boolean)
+      matched = nodes.find(node => direct.includes(node.id) && compatible(node, entity.type))
     }
     if (!matched) {
       let best: { node: GraphState['nodes'][number], score: number } | null = null
       for (const node of nodes) {
+        if (!compatible(node, entity.type)) continue
         const score = nameScore(entity, node)
         if (!best || score > best.score) best = { node, score }
       }
@@ -227,6 +257,7 @@ export async function proposeOps(input: {
         })
       }
       remember(names, matched.id)
+      for (const name of [entity.labelZh, entity.labelEn]) if (normalizeName(name)) primaryByName.set(normalizeName(name), matched.id)
       continue
     }
     const nodeId = id()
@@ -240,6 +271,7 @@ export async function proposeOps(input: {
     }
     nodes.push(created)
     remember(names, nodeId)
+    for (const name of [entity.labelZh, entity.labelEn]) if (normalizeName(name)) primaryByName.set(normalizeName(name), nodeId)
     ops.push({
       opType: 'add_node',
       targetId: nodeId,
@@ -253,8 +285,9 @@ export async function proposeOps(input: {
   }
 
   for (const relation of input.extraction.relations) {
-    const sourceId = idByName.get(normalizeName(relation.sourceZh))
-    const targetId = idByName.get(normalizeName(relation.targetZh))
+    const resolve = (name: string) => primaryByName.get(normalizeName(name)) || idByName.get(normalizeName(name))
+    const sourceId = resolve(relation.sourceZh)
+    const targetId = resolve(relation.targetZh)
     if (!sourceId || !targetId || sourceId === targetId) continue
     if (edges.some(edge => edge.sourceId === sourceId && edge.targetId === targetId && edge.relation === relation.relation)) continue
     const edgeId = id()
@@ -304,13 +337,20 @@ async function runFactcheck(db: AppDb, job: ClaimedJob) {
   }
   const runtime = resolveRuntime()
   const extracted = await extractClaims(version.contentMd, runtime)
+  extracted.claims = alignClaimSpans(version.contentMd, extracted.claims)
   const usages: Usage[] = [extracted.usage]
-  const evidenceBundle = []
+  // One entry per extracted claim so verdict.index lines up with the evidence it was judged on.
+  const evidenceBundle: Array<{ claim: string, knowledgeBase: Awaited<ReturnType<typeof kbHits>>, web: Awaited<ReturnType<typeof searchWeb>>['citations'] }> =
+    extracted.claims.map(claim => ({ claim: claim.text, knowledgeBase: [], web: [] }))
   const counts = await searchCounts(db, job.workspaceId)
   const webAllowed = note.webSearchOverride ?? gate.workspace.webSearchEnabled
-  for (const claim of extracted.claims.filter(item => item.checkable).slice(0, 8)) {
-    const kb = await kbHits(db, job.workspaceId, claim.text)
-    let web: Array<{ url: string, title: string, quote: string, provider: string }> = []
+  const checkable = extracted.claims
+    .map((claim, index) => ({ claim, index }))
+    .filter(item => item.claim.checkable)
+    .slice(0, 8)
+  for (const { claim, index } of checkable) {
+    const kb = await kbHits(db, job.workspaceId, claim.text, documentId, usages)
+    let web: Awaited<ReturnType<typeof searchWeb>>['citations'] = []
     if (webAllowed) {
       const found = await searchWeb(claim.text, {
         exaApiKey: process.env.EXA_API_KEY,
@@ -322,11 +362,20 @@ async function runFactcheck(db: AppDb, job: ClaimedJob) {
       }
       web = found.citations
     }
-    evidenceBundle.push({ claim: claim.text, knowledgeBase: kb, web })
+    evidenceBundle[index] = { claim: claim.text, knowledgeBase: kb, web }
   }
-  const judged = await judgeClaims(extracted.claims, evidenceBundle, runtime)
+  const judged = await judgeClaims(
+    extracted.claims.map((claim, index) => ({ index, ...claim })),
+    evidenceBundle.map((bundle, index) => ({ index, ...bundle })),
+    runtime
+  )
   usages.push(judged.usage)
-  const verdicts = [...judged.verdicts]
+  const seen = new Set<number>()
+  const verdicts = judged.verdicts.filter((verdict) => {
+    if (!extracted.claims[verdict.index] || seen.has(verdict.index)) return false
+    seen.add(verdict.index)
+    return true
+  })
   for (const verdict of verdicts) {
     if (verdict.verdict === 'contradicted' && verdict.confidence >= 0.85) {
       const claim = extracted.claims[verdict.index]
@@ -750,4 +799,45 @@ export async function workspaceWebSearch(db: AppDb, workspaceId: string, enabled
 
 export async function workspaceLang(db: AppDb, workspaceId: string, lang: 'zh-TW' | 'en') {
   await db.update(workspaces).set({ graphDisplayLang: lang }).where(eq(workspaces.id, workspaceId))
+}
+
+/** What the UI needs to poll a note's AI work: active jobs, the latest finished ones, and a pending changeset. */
+export async function documentJobStatus(db: AppDb, workspaceId: string, documentId: string) {
+  const rows = await db.execute(sql`
+    SELECT id, kind, status, attempts, last_error AS "lastError", created_at AS "createdAt", updated_at AS "updatedAt"
+    FROM jobs
+    WHERE workspace_id = ${workspaceId} AND payload->>'documentId' = ${documentId}
+    ORDER BY created_at DESC
+    LIMIT 10
+  `)
+  const list = asRows<{ id: string, kind: string, status: string, attempts: number, lastError: string | null, createdAt: string, updatedAt: string }>(rows)
+  const active = list.filter(job => job.status === 'queued' || job.status === 'running')
+  const [pending] = await db.select({ id: graphChangesets.id, createdAt: graphChangesets.createdAt })
+    .from(graphChangesets)
+    .where(and(
+      eq(graphChangesets.workspaceId, workspaceId),
+      eq(graphChangesets.documentId, documentId),
+      eq(graphChangesets.status, 'pending')
+    ))
+    .orderBy(sql`${graphChangesets.createdAt} DESC`)
+    .limit(1)
+  return {
+    active,
+    latest: {
+      factcheck: list.find(job => job.kind === 'factcheck') || null,
+      graph: list.find(job => job.kind === 'graph_incremental') || null
+    },
+    pausedBudget: list.some(job => job.status === 'paused_budget'),
+    pendingChangesetId: pending?.id || null
+  }
+}
+
+export async function hasRunnableJobs(db: AppDb, workspaceId: string) {
+  const rows = asRows<{ n: number }>(await db.execute(sql`
+    SELECT count(*)::int AS n FROM jobs
+    WHERE workspace_id = ${workspaceId}
+      AND ((status = 'queued' AND run_after <= now())
+        OR (status = 'running' AND locked_at < now() - interval '6 minutes'))
+  `))
+  return Number(rows[0]?.n || 0) > 0
 }

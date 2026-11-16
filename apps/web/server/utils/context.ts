@@ -34,9 +34,24 @@ export async function withApi<T>(work: () => Promise<T>) {
   }
 }
 
-/** Continue queued AI work without blocking the HTTP response when the platform allows it. */
-export function runQueuedJobs(event: H3Event, work: () => Promise<unknown>) {
-  const run = Promise.resolve().then(work)
+/**
+ * Continue queued AI work without blocking the HTTP response.
+ * On Vercel the function is frozen as soon as the response is sent unless the promise is
+ * registered with @vercel/functions' waitUntil, so prefer that over h3's event.waitUntil.
+ */
+export async function runQueuedJobs(event: H3Event, work: () => Promise<unknown>) {
+  const run = Promise.resolve().then(work).catch((error) => {
+    console.error('[jobs] background run failed', error instanceof Error ? error.message : error)
+  })
+  if (process.env.VERCEL) {
+    try {
+      const { waitUntil } = await import('@vercel/functions')
+      waitUntil(run)
+      return
+    } catch (error) {
+      console.warn('[jobs] @vercel/functions waitUntil unavailable', error instanceof Error ? error.message : error)
+    }
+  }
   const waitUntil = (event as H3Event & { waitUntil?: (promise: Promise<unknown>) => void }).waitUntil
   if (typeof waitUntil === 'function') {
     waitUntil(run)
