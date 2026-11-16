@@ -2,5 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nuxtjs",
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm build"
+  "buildCommand": "pnpm build",
+  "crons": [
+    {
+      "path": "/api/cron/process-jobs",
+      "schedule": "0 16 * * *"
+    }
+  ]
 }

@@ -39,7 +39,7 @@ pnpm dev
 pnpm test          # 圖譜引擎與資料庫整合測試
 pnpm db:migrate    # 套用 packages/db/migrations
 pnpm db:seed       # 空庫時寫入示範筆記
-pnpm worker        # 本機跑 AI worker（正式環境改由 Render 跑）
+pnpm worker        # 本機可選的佇列 worker（正式環境由 Vercel 處理）
 pnpm db:generate   # 改過 Drizzle schema 後產生新的 SQL migration
 ```
 
@@ -50,7 +50,7 @@ pnpm db:generate   # 改過 Drizzle schema 後產生新的 SQL migration
 | 名稱 | 用途 |
 | --- | --- |
 | `DATABASE_URL` | 網站用的連線。Vercel 請填 Neon **pooled** URL。本機可與直接連線相同。主機名稱含 `neon.tech` 時，網站改用 `@neondatabase/serverless`。設 `DATABASE_DRIVER=postgres` 可強制用 postgres.js。 |
-| `DATABASE_URL_UNPOOLED` | Neon **直接連線**。migration 與 Render worker 用這個。本機沒有 pooler 時，填跟 `DATABASE_URL` 一樣即可。 |
+| `DATABASE_URL_UNPOOLED` | Neon **直接連線**。migration 與本機 `pnpm worker` 用這個。本機沒有 pooler 時，填跟 `DATABASE_URL` 一樣即可。 |
 | `GEMINI_API_KEY` | 有這把金鑰且 `LLM_PROVIDER` 不是 `mock`，就呼叫 Google Gemini。 |
 | `LLM_PROVIDER` | `mock` 或 `gemini`。留空且沒有金鑰時視為 mock。 |
 | `EXTRACTION_MODEL` | 抽主張、抽圖譜。預設 `gemini-3.5-flash-lite`。 |
@@ -63,7 +63,7 @@ pnpm db:generate   # 改過 Drizzle schema 後產生新的 SQL migration
 | `NUXT_SESSION_PASSWORD` | 舊名稱。若沒設 `NUXT_APP_SECRET`，啟動時會抄過來。正式環境請只設 `NUXT_APP_SECRET`。 |
 | `MONTHLY_BUDGET_USD` | 新工作區的每月 AI 上限，預設 10。之後可在設定頁改。 |
 | `DEV_AUTH_BYPASS` | `true` 才顯示開發登入。正式環境無效。 |
-| `PROCESS_JOBS_INLINE` | `true` 時網站自己跑佇列。正式環境請設 `false`，交給 Render worker。 |
+| `PROCESS_JOBS_INLINE` | `true` 時網站在同一個 Vercel 請求裡處理佇列。正式環境設 `true`（不再用 Render worker）。 |
 | `RESEND_API_KEY` / `NOTIFY_EMAIL_FROM` | 預算警告的信。沒設就只在站內通知。 |
 | `AI_MIN_INTERVAL_MS` | 打 Gemini 前的間隔，避免太密。 |
 | `DATABASE_DRIVER` | `neon` 或 `postgres`，用來覆蓋自動判斷。 |
@@ -93,7 +93,7 @@ DATABASE_URL_UNPOOLED='postgresql://…@ep-….aws-ap-southeast-1.aws.neon.tech/
 
 ## Vercel
 
-只部署 Nuxt 網站。長時間的查核與圖譜任務交給 Render worker，不要在 Vercel 跑。
+只部署 Nuxt 網站。查核與圖譜任務在 Vercel 上以 `PROCESS_JOBS_INLINE=true` 執行：同一個請求會處理佇列，並受 Hobby 方案最長 300 秒限制；`processPending` 會在時限前停下來，避免函式被強制中止。另外每天由 Cron 呼叫 `/api/cron/process-jobs` 清掉剩餘工作（Hobby 一天只能跑一次）。
 
 在 Vercel 用 Git 匯入這個倉庫後，專案設定用下面這組。`apps/web/vercel.json` 已寫入 install / build，Root Directory 仍要在 Dashboard 設成 `apps/web`，否則 Vercel 會在倉庫根目錄找 `nuxt.config.ts`。
 
@@ -119,23 +119,23 @@ DATABASE_URL_UNPOOLED='postgresql://…@ep-….aws-ap-southeast-1.aws.neon.tech/
 - `NUXT_OAUTH_GOOGLE_CLIENT_ID`
 - `NUXT_OAUTH_GOOGLE_CLIENT_SECRET`
 
-要改呼叫 Gemini、並把佇列交給 Render：
+要改呼叫 Gemini，並在 Vercel 上處理佇列：
 
 - `GEMINI_API_KEY`
 - `LLM_PROVIDER`＝`gemini`
-- `PROCESS_JOBS_INLINE`＝`false`
+- `PROCESS_JOBS_INLINE`＝`true`
 
 可選：`EXA_API_KEY`、`TAVILY_API_KEY`、`EXTRACTION_MODEL`、`VERDICT_MODEL`、`EMBEDDING_MODEL`、`MONTHLY_BUDGET_USD`、`RESEND_API_KEY`、`NOTIFY_EMAIL_FROM`。
 
-不要在 Vercel 設定 `DEV_AUTH_BYPASS`。`DATABASE_URL_UNPOOLED` 給 migration 與 Render worker，網站不必設。
+不要在 Vercel 設定 `DEV_AUTH_BYPASS`。`DATABASE_URL_UNPOOLED` 給 migration 與本機 worker，網站不必設。正式與預覽環境請另設 `CRON_SECRET`，供每日排程驗證。Production 的 `DATABASE_URL` 請指向 Neon `main` 的 pooled 連線，Preview 請指向 Neon `preview` 分支的 pooled 連線。
 
 Google 同意畫面的重新導向網址加上 `https://<你的網域>/auth/google`。本機是 `http://127.0.0.1:38471/auth/google`。
 
-## Render worker
+## 佇列與可選的本機 worker
 
-`render.yaml` 是 Background Worker，區域 `singapore`（靠近 Neon 的 `aws-ap-southeast-1`），沒有在 Render 另開資料庫。不要把金鑰寫進 blueprint；`sync: false` 的變數要在 Dashboard 填，其中 `DATABASE_URL_UNPOOLED` 是 Neon 直接連線。
+正式環境不再使用 Render。網站在 Vercel 以 `PROCESS_JOBS_INLINE=true` 處理佇列，並用每日 Cron（`0 16 * * *`，UTC 16:00，也就是台北時間隔日 00:00）補跑 `/api/cron/process-jobs`。Cron 請求必須帶 `Authorization: Bearer $CRON_SECRET`。
 
-本機對應指令是 `pnpm worker`。
+`render.yaml` 仍留在倉庫裡，但目前不會部署。本機若想自己跑佇列，用 `pnpm worker`。
 
 ## Google 登入
 
@@ -157,4 +157,4 @@ pnpm test
 - 學生身分的介面、留言、修改建議（資料表 `comments`、`suggestions` 已在 migration 裡）
 - Obsidian 倉庫匯入
 - 透過 Vercel AI Gateway 呼叫模型（現在是 `@ai-sdk/google`，之後只要改 provider）
-- 尚未在 Vercel 建立專案。Git 接上之後，用上一節的 Root Directory、Framework Preset 與指令即可；連線字串、Google OAuth、Exa / Tavily、Vercel 與 Render 的環境變數都要自己填。
+- Vercel 專案已接上 Git：`main` 部署到 Production，其他分支部署到 Preview。Neon 同樣用 `main` 給 Production、`preview` 給 Preview。請自行填入 Google OAuth、Gemini 與 Exa 等密鑰。

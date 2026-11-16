@@ -33,3 +33,17 @@ export async function withApi<T>(work: () => Promise<T>) {
     throw createError({ statusCode: 400, message })
   }
 }
+
+/** Continue queued AI work without blocking the HTTP response when the platform allows it. */
+export function runQueuedJobs(event: H3Event, work: () => Promise<unknown>) {
+  const run = Promise.resolve().then(work)
+  const waitUntil = (event as H3Event & { waitUntil?: (promise: Promise<unknown>) => void }).waitUntil
+  if (typeof waitUntil === 'function') {
+    waitUntil(run)
+    return
+  }
+  return run
+}
+
+/** Leave enough headroom under Vercel Hobby's 300s function limit. */
+export const JOB_BUDGET_MS = 270_000

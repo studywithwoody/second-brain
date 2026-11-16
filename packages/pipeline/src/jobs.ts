@@ -578,10 +578,17 @@ export async function runClaimedJob(db: AppDb, job: ClaimedJob) {
   }
 }
 
-export async function processPending(db: AppDb, workspaceId?: string, limit = 20) {
+export async function processPending(
+  db: AppDb,
+  workspaceId?: string,
+  limit = 20,
+  options?: { budgetMs?: number }
+) {
   await recoverStaleJobs(db)
   const done: string[] = []
+  const started = Date.now()
   for (let index = 0; index < limit; index++) {
+    if (options?.budgetMs != null && Date.now() - started >= options.budgetMs) break
     const job = await claimNextJob(db, workspaceId)
     if (!job) break
     try {
