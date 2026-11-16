@@ -319,8 +319,8 @@ const verdictLabel: Record<string, string> = {
               <span class="text-xs text-stone-500">信心 {{ Math.round(claim.confidence * 100) }}%</span>
             </div>
             <p class="mt-2 text-sm">{{ claim.text }}</p>
-            <p class="mt-1 text-sm text-stone-600">{{ claim.reasoning }}</p>
-            <p v-if="claim.suggestedFix" class="mt-1 text-sm text-emerald-800">建議：{{ claim.suggestedFix }}</p>
+            <div class="mt-1 text-sm text-stone-600"><MarkdownView :source="claim.reasoning || ''" /></div>
+            <div v-if="claim.suggestedFix" class="mt-1 text-sm text-emerald-800"><span class="font-medium">建議修正</span><MarkdownView :source="claim.suggestedFix" /></div>
             <ul class="mt-2 space-y-1 text-xs text-stone-500">
               <li v-for="(cite, index) in claim.citations" :key="index">
                 {{ cite.title }}<span v-if="cite.provider === 'mock'">（示範來源）</span>：{{ cite.quote }}

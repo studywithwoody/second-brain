@@ -18,7 +18,8 @@ export function verdictPrompt(claims: unknown, evidence: unknown) {
 - 每條主張用它的 index 回覆，證據也用同一個 index 對應。
 - knowledgeBase 是使用者其他筆記，不是權威；與網路證據衝突時以可靠網路來源為準。
 - 這是輔助判斷，不是最終權威。
-用繁體中文寫 reasoning。
+- reasoning 與 suggestedFix 請以繁體中文 Markdown 撰寫；可用段落、項目符號、粗體與連結整理證據和結論，避免使用原始 HTML。
+- reasoning 應簡潔說明判定依據及證據限制；suggestedFix 請提供可直接替換原主張的 Markdown 文字。
 
 主張：
 ${JSON.stringify(claims)}
