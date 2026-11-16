@@ -93,13 +93,43 @@ DATABASE_URL_UNPOOLED='postgresql://…@ep-….aws-ap-southeast-1.aws.neon.tech/
 
 ## Vercel
 
-部署 Nuxt 網站，不要在 Vercel 跑長時間的 worker。
+只部署 Nuxt 網站。長時間的查核與圖譜任務交給 Render worker，不要在 Vercel 跑。
 
-1. Root Directory 設 `apps/web`，並包含倉庫根目錄的檔案（pnpm workspace 需要根目錄的 `pnpm-workspace.yaml` 與 `packages/`）。
-2. Install Command：`pnpm install`（若工作目錄停在 `apps/web`，改成 `cd ../.. && pnpm install`）。
-3. Build Command：`pnpm --filter @kb/web build`。Nuxt 在 Vercel 上會自己選 Nitro 的 Vercel preset。
-4. 環境變數：`DATABASE_URL`（pooled）、`NUXT_APP_SECRET`、`OWNER_EMAIL`、`NUXT_OAUTH_GOOGLE_CLIENT_ID`、`NUXT_OAUTH_GOOGLE_CLIENT_SECRET`、`GEMINI_API_KEY`、`EXA_API_KEY`、`TAVILY_API_KEY`、模型名稱、`MONTHLY_BUDGET_USD`。`PROCESS_JOBS_INLINE=false`。`LLM_PROVIDER=gemini`。不要設 `DEV_AUTH_BYPASS`。
-5. Google 同意畫面的重新導向網址加上 `https://<你的網域>/auth/google`。本機是 `http://127.0.0.1:38471/auth/google`。
+在 Vercel 用 Git 匯入這個倉庫後，專案設定用下面這組。`apps/web/vercel.json` 已寫入 install / build，Root Directory 仍要在 Dashboard 設成 `apps/web`，否則 Vercel 會在倉庫根目錄找 `nuxt.config.ts`。
+
+| 設定 | 值 |
+| --- | --- |
+| Root Directory | `apps/web` |
+| Include source files outside of the Root Directory | 開啟。pnpm workspace 的 `pnpm-lock.yaml`、`pnpm-workspace.yaml`、`packages/` 都在倉庫根目錄。 |
+| Framework Preset | Nuxt.js |
+| Node.js | 22.x（`apps/web/.node-version`） |
+| Install Command | `cd ../.. && pnpm install --frozen-lockfile` |
+| Build Command | `pnpm build`（在 `apps/web` 裡就是 `nuxt build`） |
+| Output Directory | 留空。不要填 `.output`、`dist` 或 `public`。 |
+
+`nuxt build` 在 Vercel 上會自動用 Nitro 的 vercel preset，把 Build Output API 寫到 Root Directory 底下的 `.vercel/output`。Vercel 認這個目錄；另外指定 Output Directory 會讓 serverless 函式部署失敗。
+
+環境變數只填名稱對應的值，不要把 `.env` 提交上去。
+
+網站要能啟動並登入：
+
+- `DATABASE_URL`：Neon **pooled** URL（主機名稱含 `neon.tech` 時會用 `@neondatabase/serverless`）
+- `NUXT_APP_SECRET`
+- `OWNER_EMAIL`
+- `NUXT_OAUTH_GOOGLE_CLIENT_ID`
+- `NUXT_OAUTH_GOOGLE_CLIENT_SECRET`
+
+要改呼叫 Gemini、並把佇列交給 Render：
+
+- `GEMINI_API_KEY`
+- `LLM_PROVIDER`＝`gemini`
+- `PROCESS_JOBS_INLINE`＝`false`
+
+可選：`EXA_API_KEY`、`TAVILY_API_KEY`、`EXTRACTION_MODEL`、`VERDICT_MODEL`、`EMBEDDING_MODEL`、`MONTHLY_BUDGET_USD`、`RESEND_API_KEY`、`NOTIFY_EMAIL_FROM`。
+
+不要在 Vercel 設定 `DEV_AUTH_BYPASS`。`DATABASE_URL_UNPOOLED` 給 migration 與 Render worker，網站不必設。
+
+Google 同意畫面的重新導向網址加上 `https://<你的網域>/auth/google`。本機是 `http://127.0.0.1:38471/auth/google`。
 
 ## Render worker
 
@@ -127,4 +157,4 @@ pnpm test
 - 學生身分的介面、留言、修改建議（資料表 `comments`、`suggestions` 已在 migration 裡）
 - Obsidian 倉庫匯入
 - 透過 Vercel AI Gateway 呼叫模型（現在是 `@ai-sdk/google`，之後只要改 provider）
-- 自動部署。連線字串、Google OAuth、Exa / Tavily、Vercel 與 Render 的環境變數都要自己填。
+- 尚未在 Vercel 建立專案。Git 接上之後，用上一節的 Root Directory、Framework Preset 與指令即可；連線字串、Google OAuth、Exa / Tavily、Vercel 與 Render 的環境變數都要自己填。
