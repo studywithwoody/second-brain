@@ -59,6 +59,11 @@ export default defineNuxtConfig({
   },
 
   nitro: {
+    vercel: {
+      functions: {
+        maxDuration: 300
+      }
+    },
     externals: {
       inline: [/^@kb\//]
     }

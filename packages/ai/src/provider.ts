@@ -70,9 +70,17 @@ function google(model: string) {
   return client(model)
 }
 
+/** Gemini embeddings may not report usage; fall back to a rough estimate so spend is never NaN. */
+function embeddingTokens(usage: unknown, texts: string[]) {
+  const tokens = Number((usage as { tokens?: number } | undefined)?.tokens)
+  if (Number.isFinite(tokens) && tokens > 0) return tokens
+  return Math.ceil(texts.join('').length / 2)
+}
+
 function usageFrom(model: string, usage: { inputTokens?: number, outputTokens?: number, promptTokens?: number, completionTokens?: number } | undefined): Usage {
-  const inputTokens = usage?.inputTokens ?? usage?.promptTokens ?? 0
-  const outputTokens = usage?.outputTokens ?? usage?.completionTokens ?? 0
+  const finite = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : undefined
+  const inputTokens = finite(usage?.inputTokens) ?? finite(usage?.promptTokens) ?? 0
+  const outputTokens = finite(usage?.outputTokens) ?? finite(usage?.completionTokens) ?? 0
   return withCost({ model, inputTokens, outputTokens })
 }
 
@@ -172,7 +180,7 @@ export async function embedTexts(texts: string[], runtime = resolveRuntime()) {
   })
   return {
     vectors: result.embeddings.map(fitDim),
-    usage: usageFrom(runtime.embeddingModel, result.usage)
+    usage: usageFrom(runtime.embeddingModel, { inputTokens: embeddingTokens(result.usage, texts) })
   }
 }
 

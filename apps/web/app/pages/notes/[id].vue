@@ -11,6 +11,67 @@ const historyContent = ref('')
 const reviewNote = ref('')
 
 const api = useRequestFetch()
+const jobState = ref<any>(null)
+const waitingForGraph = ref(false)
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+let lastKick = 0
+let pollStarted = 0
+
+const jobKindLabel: Record<string, string> = {
+  factcheck: 'AI 查核',
+  graph_incremental: '圖譜抽取'
+}
+const activeLabel = computed(() => {
+  const active = jobState.value?.active || []
+  if (!active.length) return ''
+  return active.map((job: any) => `${jobKindLabel[job.kind] || job.kind}${job.status === 'running' ? '進行中' : '排隊中'}`).join('、')
+})
+
+async function poll() {
+  if (pollTimer) clearTimeout(pollTimer)
+  pollTimer = null
+  try {
+    const before = jobState.value
+    jobState.value = await $fetch(`/api/jobs`, { query: { documentId: id.value } })
+    const active = jobState.value.active || []
+    const finishedFactcheck = before?.active?.some((job: any) => job.kind === 'factcheck') && !active.some((job: any) => job.kind === 'factcheck')
+    if (finishedFactcheck) await load()
+    if (waitingForGraph.value) {
+      const graphJob = jobState.value.latest?.graph
+      if (jobState.value.pendingChangesetId && !active.some((job: any) => job.kind === 'graph_incremental')) {
+        waitingForGraph.value = false
+        await navigateTo(`/graph/changesets/${jobState.value.pendingChangesetId}`)
+        return
+      }
+      if (graphJob && (graphJob.status === 'failed' || graphJob.status === 'succeeded') && !active.length && !jobState.value.pendingChangesetId) {
+        waitingForGraph.value = false
+        error.value = graphJob.status === 'failed' ? `圖譜抽取失敗：${graphJob.lastError || '未知錯誤'}` : '這篇沒有新的圖譜變更。'
+      }
+      if (jobState.value.pausedBudget) {
+        waitingForGraph.value = false
+        error.value = '本月 AI 預算已用完，圖譜任務已暫停。'
+      }
+    }
+    if (active.length || waitingForGraph.value) {
+      // A Vercel function can be cut off mid-job; nudge the queue every 20s so stale work restarts.
+      if (Date.now() - lastKick > 20_000) {
+        lastKick = Date.now()
+        $fetch('/api/jobs/process', { method: 'POST' }).catch(() => {})
+      }
+      if (Date.now() - pollStarted < 10 * 60_000) pollTimer = setTimeout(poll, 3000)
+    }
+  } catch {
+    pollTimer = setTimeout(poll, 6000)
+  }
+}
+function startPolling() {
+  pollStarted = Date.now()
+  lastKick = Date.now()
+  poll()
+}
+onMounted(startPolling)
+onBeforeUnmount(() => { if (pollTimer) clearTimeout(pollTimer) })
+
 async function load() {
   error.value = ''
   try {
@@ -44,6 +105,7 @@ async function save() {
       }
     })
     await load()
+    startPolling()
   } catch (err: any) {
     error.value = err?.data?.message || '儲存失敗'
   } finally {
@@ -56,6 +118,7 @@ async function factcheck() {
   try {
     await $fetch(`/api/notes/${id.value}/factcheck`, { method: 'POST' })
     await load()
+    startPolling()
   } catch (err: any) {
     error.value = err?.data?.message || '查核失敗'
   } finally {
@@ -68,10 +131,14 @@ async function buildGraph() {
   if (flagged.length && !confirm(`還有 ${flagged.length} 條主張沒覆核。仍要產生圖譜變更集嗎？`)) return
   saving.value = true
   try {
-    await $fetch(`/api/notes/${id.value}/graph`, { method: 'POST' })
-    const changes = await $fetch<{ changesets: Array<{ id: string, documentId: string, status: string }> }>('/api/graph/changesets')
-    const pending = changes.changesets.find(item => item.documentId === id.value && item.status === 'pending')
-    if (pending) await navigateTo(`/graph/changesets/${pending.id}`)
+    const queued = await $fetch<{ blocked?: boolean }>(`/api/notes/${id.value}/graph`, { method: 'POST' })
+    if (queued?.blocked) {
+      error.value = '本月 AI 預算不足，圖譜任務已排隊暫停。'
+      return
+    }
+    waitingForGraph.value = true
+    jobState.value = { ...(jobState.value || {}), pendingChangesetId: null }
+    startPolling()
   } catch (err: any) {
     error.value = err?.data?.message || '無法建立圖譜變更'
   } finally {
@@ -81,9 +148,10 @@ async function buildGraph() {
 
 async function review(claimId: string, decision: string) {
   try {
-    await $fetch(`/api/claims/${claimId}/review`, { method: 'POST', body: { decision, note: reviewNote.value } })
+    const result = await $fetch<{ versionId?: string | null }>(`/api/claims/${claimId}/review`, { method: 'POST', body: { decision, note: reviewNote.value } })
     reviewNote.value = ''
     await load()
+    if (result?.versionId) startPolling()
   } catch (err: any) {
     error.value = err?.data?.message || '覆核失敗'
   }
@@ -149,6 +217,10 @@ const verdictLabel: Record<string, string> = {
     </div>
     <UAlert class="mt-3" color="warning" variant="subtle" title="事實查核是輔助，不是權威" description="模型會誤判，網頁來源也可能錯。請看引用與信心分數，再決定要不要改。" />
     <p v-if="error" class="mt-2 text-sm text-red-700">{{ error }}</p>
+    <p v-if="activeLabel || waitingForGraph" class="mt-2 flex items-center gap-2 text-sm text-stone-600">
+      <UIcon name="i-lucide-loader-circle" class="animate-spin" />
+      {{ activeLabel || '等待圖譜抽取' }}…完成後會自動更新{{ waitingForGraph ? '並打開變更預覽' : '' }}
+    </p>
     <div class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
       <section class="rounded-2xl border border-stone-300 bg-white">
         <div class="flex gap-2 border-b border-stone-200 p-2">
@@ -183,7 +255,7 @@ const verdictLabel: Record<string, string> = {
             <h2 class="serif text-xl">查核</h2>
             <span class="text-xs text-stone-500">預估 ${{ detail.estimates.factcheckUsd.toFixed(4) }}</span>
           </div>
-          <p v-if="!detail.claims.length" class="mt-3 text-sm text-stone-500">這篇還沒有查核結果。儲存後會自動跑一次。</p>
+          <p v-if="!detail.claims.length" class="mt-3 text-sm text-stone-500">{{ jobState?.active?.some((job: any) => job.kind === 'factcheck') ? 'AI 正在查核，通常一分鐘內完成。' : '這篇還沒有查核結果。儲存後會自動跑一次。' }}</p>
           <article v-for="claim in detail.claims" :key="claim.id" class="mt-3 border-t border-stone-100 pt-3">
             <div class="flex items-center justify-between gap-2">
               <UBadge :color="claim.verdict === 'contradicted' ? 'error' : claim.verdict === 'supported' ? 'success' : 'warning'" variant="subtle">
@@ -211,7 +283,7 @@ const verdictLabel: Record<string, string> = {
         <section class="rounded-2xl border border-stone-300 bg-white p-4">
           <h2 class="serif text-xl">更新圖譜</h2>
           <p class="mt-1 text-sm text-stone-600">預估 ${{ detail.estimates.graphUsd.toFixed(4) }}。這只會產生變更集，不會直接改圖。</p>
-          <UButton class="mt-3" block @click="buildGraph">產生圖譜變更</UButton>
+          <UButton class="mt-3" block :loading="waitingForGraph" @click="buildGraph">產生圖譜變更</UButton>
           <div class="mt-3 flex items-center justify-between text-sm">
             <span>這篇使用網路搜尋</span>
             <USwitch
