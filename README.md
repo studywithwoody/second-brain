@@ -91,6 +91,10 @@ DATABASE_URL_UNPOOLED='postgresql://…@ep-….aws-ap-southeast-1.aws.neon.tech/
 
 網站（Vercel）的 `DATABASE_URL` 請填 **pooled** URL（主機名稱通常含 `-pooler` 與 `neon.tech`）。程式看到 `neon.tech` 會用 `@neondatabase/serverless`。Worker 與 migration 繼續用 `DATABASE_URL_UNPOOLED` 的直接連線。
 
+## 開發流程
+
+功能分支 → PR 合併到 `preview`（測試網址 https://second-brain-kb-preview.vercel.app，Neon `preview` 分支）→ 擁有者測試 → PR `preview` → `main`（正式站）。詳見 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## Vercel
 
 只部署 Nuxt 網站。查核與圖譜任務在 Vercel 上以 `PROCESS_JOBS_INLINE=true` 執行：同一個請求會處理佇列，並受 Hobby 方案最長 300 秒限制；`processPending` 會在時限前停下來，避免函式被強制中止。另外每天由 Cron 呼叫 `/api/cron/process-jobs` 清掉剩餘工作（Hobby 一天只能跑一次）。
