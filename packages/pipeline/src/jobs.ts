@@ -428,7 +428,7 @@ async function runFactcheck(db: AppDb, job: ClaimedJob) {
         reasoning: verdict.reasoning,
         suggestedFix: verdict.suggestedFix || null,
         evidenceSource,
-        citations
+        citations: []
       }
     }))
   }

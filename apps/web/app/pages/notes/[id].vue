@@ -242,11 +242,6 @@ const verdictLabel: Record<string, string> = {
   not_checkable: '無法查證'
 }
 
-function clipQuote(quote?: string, max = 80) {
-  if (!quote) return ''
-  return quote.length > max ? `${quote.slice(0, max)}…` : quote
-}
-
 const folderSegments = computed(() => {
   const path = detail.value?.note?.path || ''
   const parts = path.split('/')
@@ -381,11 +376,6 @@ const fileName = computed({
             <p class="mt-2 text-sm">{{ claim.text }}</p>
             <div class="mt-1 text-sm text-stone-600"><MarkdownView :source="claim.reasoning || ''" /></div>
             <div v-if="claim.suggestedFix" class="mt-1 text-sm text-emerald-800"><span class="font-medium">建議修正</span><MarkdownView :source="claim.suggestedFix" /></div>
-            <ul class="mt-2 space-y-1 text-xs text-stone-500">
-              <li v-for="(cite, index) in claim.citations" :key="index" :title="cite.quote">
-                {{ cite.title }}<span v-if="cite.provider === 'mock'">（示範來源）</span>：{{ clipQuote(cite.quote) }}
-              </li>
-            </ul>
             <p v-if="claim.review" class="mt-2 text-xs text-stone-500">{{ reviewLabel[claim.review.decision] || `已覆核：${claim.review.decision}` }}</p>
             <div v-else-if="claim.verdict === 'contradicted' || claim.verdict === 'uncertain'" class="mt-2 flex flex-wrap gap-1">
               <UButton size="xs" @click="review(claim.id, 'accept_fix')">接受修正</UButton>
