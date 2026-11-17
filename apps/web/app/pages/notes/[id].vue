@@ -305,9 +305,6 @@ const fileName = computed({
     </div>
 
     <div class="flex flex-wrap items-start justify-between gap-3">
-      <div class="min-w-0 flex-1">
-        <UInput v-model="detail.note.title" class="serif text-2xl" placeholder="筆記標題" />
-      </div>
       <div class="flex flex-wrap gap-2">
         <UButton color="neutral" variant="soft" @click="showHistory = !showHistory">版本</UButton>
         <UButton color="neutral" variant="outline" icon="i-lucide-search-check" :loading="checking || factcheckStatus === 'running' || factcheckStatus === 'queued'" @click="factcheck">事實查核</UButton>
