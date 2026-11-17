@@ -241,14 +241,72 @@ const verdictLabel: Record<string, string> = {
   uncertain: '不確定',
   not_checkable: '無法查證'
 }
+
+const folderSegments = computed(() => {
+  const path = detail.value?.note?.path || ''
+  const parts = path.split('/')
+  parts.pop()
+  return parts.map((name: string, i: number) => ({
+    name,
+    fullPath: parts.slice(0, i + 1).join('/')
+  }))
+})
+
+const fileName = computed({
+  get() {
+    const path = detail.value?.note?.path || ''
+    const parts = path.split('/')
+    return parts[parts.length - 1] || ''
+  },
+  set(val: string) {
+    if (!detail.value?.note) return
+    const clean = val.replace(/[\/\\]/g, '').trim()
+    const parts = (detail.value.note.path || '').split('/')
+    parts.pop()
+    const folder = parts.join('/')
+    detail.value.note.path = folder ? `${folder}/${clean}` : clean
+  }
+})
 </script>
 
 <template>
   <div v-if="detail">
+    <!-- 檔案結構 Breadcrumb 與檔名編輯 -->
+    <div class="mb-3 flex flex-wrap items-center gap-2 text-sm">
+      <nav class="flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
+        <NuxtLink to="/notes" class="flex items-center gap-1 font-medium hover:text-stone-900 transition-colors">
+          <UIcon name="i-lucide-folder" class="size-3.5 text-stone-500" />
+          <span>筆記</span>
+        </NuxtLink>
+        <template v-for="seg in folderSegments" :key="seg.fullPath">
+          <span class="text-stone-300">/</span>
+          <NuxtLink
+            :to="`/notes?folder=${encodeURIComponent(seg.fullPath)}`"
+            class="hover:text-stone-900 hover:underline transition-colors"
+          >
+            {{ seg.name }}
+          </NuxtLink>
+        </template>
+        <span class="text-stone-300">/</span>
+      </nav>
+
+      <div class="inline-flex items-center gap-1 rounded-lg border border-stone-300 bg-stone-50 px-2 py-0.5 text-xs text-stone-700 transition focus-within:border-stone-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-stone-500">
+        <UIcon name="i-lucide-file-text" class="size-3.5 text-stone-400" />
+        <span class="text-stone-400 select-none">檔名:</span>
+        <input
+          v-model="fileName"
+          type="text"
+          class="min-w-[100px] max-w-[220px] bg-transparent font-mono text-xs text-stone-800 outline-none placeholder:text-stone-400"
+          placeholder="檔名"
+          title="變更檔名"
+        />
+        <span class="font-mono text-stone-400 select-none">.md</span>
+      </div>
+    </div>
+
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="min-w-0 flex-1">
-        <UInput v-model="detail.note.title" class="serif text-2xl" />
-        <UInput v-model="detail.note.path" class="mt-2 max-w-xl" placeholder="資料夾/標題" />
+        <UInput v-model="detail.note.title" class="serif text-2xl" placeholder="筆記標題" />
       </div>
       <div class="flex flex-wrap gap-2">
         <UButton color="neutral" variant="soft" @click="showHistory = !showHistory">版本</UButton>
