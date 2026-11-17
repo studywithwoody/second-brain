@@ -7,14 +7,21 @@ const props = defineProps<{
 const emit = defineEmits<{ select: [id: string] }>()
 const host = ref<HTMLDivElement | null>(null)
 const status = ref('')
-let graph: { graphData: (data: unknown) => unknown, width: (n: number) => unknown, height: (n: number) => unknown, _destructor?: () => void } | null = null
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type GraphInstance = Record<string, any> & {
+  graphData: (data: unknown) => GraphInstance
+  width: (n: number) => GraphInstance
+  height: (n: number) => GraphInstance
+  _destructor?: () => void
+}
+let graph: GraphInstance | null = null
 
-function factoryOf(mod: unknown) {
+function factoryOf(mod: unknown): () => (element: HTMLElement) => GraphInstance {
   const record = mod as { default?: unknown }
   const candidate = record.default ?? mod
-  if (typeof candidate === 'function') return candidate as () => (element: HTMLElement) => typeof graph
+  if (typeof candidate === 'function') return candidate as () => (element: HTMLElement) => GraphInstance
   const nested = (candidate as { default?: unknown } | null)?.default
-  if (typeof nested === 'function') return nested as () => (element: HTMLElement) => typeof graph
+  if (typeof nested === 'function') return nested as () => (element: HTMLElement) => GraphInstance
   throw new Error('圖譜元件沒有載入')
 }
 

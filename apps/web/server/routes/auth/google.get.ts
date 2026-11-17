@@ -1,3 +1,4 @@
+import { defineEventHandler, getQuery, sendRedirect } from 'nuxt/server'
 import { upsertOwner } from '@kb/pipeline'
 import { ownerEmail, useDb } from '../../utils/context'
 

@@ -100,7 +100,7 @@ async function save() {
   saving.value = true
   error.value = ''
   try {
-    await $fetch(`/api/notes/${id.value}`, {
+    await $fetch<unknown>(`/api/notes/${id.value}`, {
       method: 'PATCH',
       body: {
         title: detail.value.note.title,

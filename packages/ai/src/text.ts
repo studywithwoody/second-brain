@@ -33,7 +33,7 @@ export function mockEmbedding(text: string, dim = 768): number[] {
     const h = hashString(token)
     const i = h % dim
     const sign = (h & 2) === 0 ? 1 : -1
-    vector[i] += sign * (1 + (h % 7) / 10)
+    vector[i] = (vector[i] ?? 0) + sign * (1 + (h % 7) / 10)
   }
   const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1
   return vector.map(value => value / norm)

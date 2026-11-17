@@ -6,7 +6,8 @@ import {
   graphNodes,
   graphOps,
   graphVersions,
-  type AppDb
+  type AppDb,
+  type OpEvidence
 } from '@kb/db'
 import {
   applyOps,
@@ -244,7 +245,7 @@ export async function createChangeset(db: AppDb, input: {
       confidence: op.confidence,
       reason: op.reason,
       source: op.source,
-      evidence: (op as GraphOp & { evidence?: unknown[] }).evidence || [],
+      evidence: (op as GraphOp & { evidence?: OpEvidence[] }).evidence || [],
       sortOrder: index
     })))
   }
